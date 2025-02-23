@@ -11,7 +11,30 @@ Adding dependency:
 phi-accrual-failure-detector = "0.1"
 ```
 
-TODO: Example.
+Example:
+
+```rust
+let mut detector = PhiAccrualFailureDetector::builder().build().unwrap();
+
+detector.heartbeat();
+thread::sleep(Duration::from_millis(1000));
+
+detector.heartbeat();
+thread::sleep(Duration::from_millis(1000));
+
+detector.heartbeat();
+thread::sleep(Duration::from_millis(1000));
+
+// The resource is available when receiving regular heartbeats.
+println!("is available: {}", detector.is_available());
+assert!(detector.is_available());
+
+thread::sleep(Duration::from_millis(4000));
+
+// The resource is no longer available, since it's missed a few heartbeats.
+println!("is available: {}", detector.is_available());
+assert!(!detector.is_available());
+```
 
 # License
 
