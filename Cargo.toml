@@ -1,0 +1,15 @@
+[package]
+name = "phi-accrual-failure-detector"
+version = "0.1.0"
+edition = "2021"
+keywords = []
+categories = ["algorithms"]
+authors = ["Ivan Reshetnikov"]
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/heilhead/phi-accrual-failure-detector.git"
+homepage = "https://github.com/heilhead/phi-accrual-failure-detector.git"
+description = "Phi Accrual Failure Detector"
+
+[dependencies]
+thiserror = "2.0"
