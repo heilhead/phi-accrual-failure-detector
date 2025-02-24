@@ -271,6 +271,13 @@ impl<S: sealed::State<Clock = DefaultClock>> FailureDetector<S> {
     }
 }
 
+impl<S: sealed::State<Clock = DefaultClock>> Default for FailureDetector<S> {
+    fn default() -> Self {
+        // Safe unwrap with default parameters.
+        Self::builder().build().unwrap()
+    }
+}
+
 pub trait Detector {
     /// Notifies the detector that a heartbeat arrived from the monitored
     /// resource. This causes the detector to update its state.
