@@ -14,7 +14,7 @@ phi-accrual-failure-detector = "0.1"
 Example:
 
 ```rust
-let mut detector = PhiAccrualFailureDetector::builder().build().unwrap();
+let detector = UnsyncDetector::default();
 
 detector.heartbeat();
 thread::sleep(Duration::from_millis(1000));

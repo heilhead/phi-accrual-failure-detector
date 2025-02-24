@@ -4,7 +4,7 @@ use {
 };
 
 fn main() {
-    let detector = UnsyncDetector::builder().build().unwrap();
+    let detector = UnsyncDetector::default();
 
     println!("heartbeat");
     detector.heartbeat();
