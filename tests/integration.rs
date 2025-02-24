@@ -1,31 +1,11 @@
 use {
-    super::*,
+    phi_accrual_failure_detector::*,
     std::{
         sync::atomic::{AtomicU64, AtomicUsize, Ordering},
         thread,
+        time::Duration,
     },
 };
-
-#[test]
-fn circle_buffer() {
-    let mut buf = CircleBuffer::new(3);
-
-    assert_eq!(buf.len(), 0);
-    assert_eq!(buf.push(1), None);
-    assert_eq!(buf.len(), 1);
-    assert_eq!(buf.push(2), None);
-    assert_eq!(buf.len(), 2);
-    assert_eq!(buf.push(3), None);
-    assert_eq!(buf.len(), 3);
-    assert_eq!(buf.push(4), Some(1));
-    assert_eq!(buf.len(), 4);
-    assert_eq!(buf.push(5), Some(2));
-    assert_eq!(buf.len(), 5);
-    assert_eq!(buf.push(6), Some(3));
-    assert_eq!(buf.len(), 6);
-    assert_eq!(buf.push(7), Some(4));
-    assert_eq!(buf.len(), 7);
-}
 
 struct FakeClock {
     intervals: Vec<u64>,
@@ -58,28 +38,19 @@ impl Clock for FakeClock {
     }
 }
 
-fn create_config() -> Config {
-    Config {
-        threshold: 8.0,
-        max_sample_size: 1000,
-        min_std_deviation: Duration::from_millis(10),
-        acceptable_heartbeat_pause: Duration::ZERO,
-        first_heartbeat_estimate: Duration::from_secs(1),
-    }
-}
-
-fn create_fake_detector(intervals: Vec<u64>) -> Detector<FakeClock> {
-    create_detector_with_config(intervals, create_config())
-}
-
-fn create_detector_with_config(intervals: Vec<u64>, config: Config) -> Detector<FakeClock> {
-    Detector::new(config, FakeClock::new(intervals))
+fn builder() -> DetectorBuilder<DefaultClock> {
+    Detector::builder()
+        .threshold(8.0)
+        .max_sample_size(100)
+        .min_std_deviation(Duration::from_millis(10))
+        .acceptable_heartbeat_pause(Duration::ZERO)
+        .first_heartbeat_estimate(Duration::from_secs(1))
 }
 
 #[test]
 fn node_available() {
     let intervals = vec![0, 1000, 100, 100];
-    let mut detector = create_fake_detector(intervals);
+    let mut detector = builder().clock(FakeClock::new(intervals)).build().unwrap();
     detector.heartbeat();
     detector.heartbeat();
     detector.heartbeat();
@@ -89,7 +60,7 @@ fn node_available() {
 #[test]
 fn node_heartbeat_missed_dead1() {
     let intervals = vec![0, 1000, 100, 100, 7000];
-    let mut detector = create_fake_detector(intervals);
+    let mut detector = builder().clock(FakeClock::new(intervals)).build().unwrap();
 
     detector.heartbeat(); // 0
     detector.heartbeat(); // 1000
@@ -102,9 +73,11 @@ fn node_heartbeat_missed_dead1() {
 #[test]
 fn node_heartbeat_missed_dead2() {
     let intervals = vec![0, 1000, 1000, 1000, 1000, 1000, 500, 500, 5000];
-    let mut config = create_config();
-    config.acceptable_heartbeat_pause = Duration::from_secs(3);
-    let mut detector = create_detector_with_config(intervals, config);
+    let mut detector = builder()
+        .acceptable_heartbeat_pause(Duration::from_secs(3))
+        .clock(FakeClock::new(intervals))
+        .build()
+        .unwrap();
 
     detector.heartbeat(); // 0
     detector.heartbeat(); // 1000
@@ -120,9 +93,11 @@ fn node_heartbeat_missed_dead2() {
 #[test]
 fn node_heartbeat_missed_alive() {
     let intervals = vec![0, 1000, 1000, 1000, 4000, 1000, 1000];
-    let mut config = create_config();
-    config.acceptable_heartbeat_pause = Duration::from_secs(3);
-    let mut detector = create_detector_with_config(intervals, config);
+    let mut detector = builder()
+        .acceptable_heartbeat_pause(Duration::from_secs(3))
+        .clock(FakeClock::new(intervals))
+        .build()
+        .unwrap();
 
     detector.heartbeat(); // 0
     detector.heartbeat(); // 1000
@@ -136,7 +111,7 @@ fn node_heartbeat_missed_alive() {
 #[test]
 fn dead_node_alive_again() {
     let intervals = vec![0, 1000, 1000, 1000, 3000, 1000, 1000];
-    let mut detector = create_fake_detector(intervals);
+    let mut detector = builder().clock(FakeClock::new(intervals)).build().unwrap();
 
     detector.heartbeat(); // 0
     detector.heartbeat(); // 1000
@@ -149,8 +124,7 @@ fn dead_node_alive_again() {
 
 #[test]
 fn node_heartbeat_missed_dead_real_clock() {
-    let config = create_config();
-    let mut detector = Detector::new(config, DefaultClock);
+    let mut detector = builder().build().unwrap();
 
     detector.heartbeat(); // 0
     thread::sleep(Duration::from_millis(1000));

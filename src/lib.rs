@@ -1,8 +1,5 @@
 use std::time::{Duration, Instant};
 
-#[cfg(test)]
-mod tests;
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Threshold must be > 0")]
@@ -49,8 +46,8 @@ impl<C: Clock> DetectorBuilder<C> {
     /// crashes.
     ///
     /// Default: 8.0
-    pub fn threshold(mut self, threshold: impl Into<f64>) -> Self {
-        self.config.threshold = threshold.into();
+    pub fn threshold(mut self, threshold: f64) -> Self {
+        self.config.threshold = threshold;
         self
     }
 
@@ -58,8 +55,8 @@ impl<C: Clock> DetectorBuilder<C> {
     /// of inter-arrival times.
     ///
     /// Default: 100
-    pub fn max_sample_size(mut self, max_sample_size: impl Into<usize>) -> Self {
-        self.config.max_sample_size = max_sample_size.into();
+    pub fn max_sample_size(mut self, max_sample_size: usize) -> Self {
+        self.config.max_sample_size = max_sample_size;
         self
     }
 
@@ -69,8 +66,8 @@ impl<C: Clock> DetectorBuilder<C> {
     /// arrival times.
     ///
     /// Default: 100ms
-    pub fn min_std_deviation(mut self, min_std_deviation: impl Into<Duration>) -> Self {
-        self.config.min_std_deviation = min_std_deviation.into();
+    pub fn min_std_deviation(mut self, min_std_deviation: Duration) -> Self {
+        self.config.min_std_deviation = min_std_deviation;
         self
     }
 
@@ -81,11 +78,8 @@ impl<C: Clock> DetectorBuilder<C> {
     /// drop.
     ///
     /// Default: 3s
-    pub fn acceptable_heartbeat_pause(
-        mut self,
-        acceptable_heartbeat_pause: impl Into<Duration>,
-    ) -> Self {
-        self.config.acceptable_heartbeat_pause = acceptable_heartbeat_pause.into();
+    pub fn acceptable_heartbeat_pause(mut self, acceptable_heartbeat_pause: Duration) -> Self {
+        self.config.acceptable_heartbeat_pause = acceptable_heartbeat_pause;
         self
     }
 
@@ -94,11 +88,8 @@ impl<C: Clock> DetectorBuilder<C> {
     /// is unknown in the beginning).
     ///
     /// Default: 1s
-    pub fn first_heartbeat_estimate(
-        mut self,
-        first_heartbeat_estimate: impl Into<Duration>,
-    ) -> Self {
-        self.config.first_heartbeat_estimate = first_heartbeat_estimate.into();
+    pub fn first_heartbeat_estimate(mut self, first_heartbeat_estimate: Duration) -> Self {
+        self.config.first_heartbeat_estimate = first_heartbeat_estimate;
         self
     }
 
@@ -159,7 +150,7 @@ impl Default for Config {
 }
 
 /// Implementation of 'The Phi Accrual Failure Detector' by Hayashibara et al.
-/// as defined in their paper: [https://oneofus.la/have-emacs-will-hack/files/HDY04.pdf]
+/// as defined in their paper: <https://oneofus.la/have-emacs-will-hack/files/HDY04.pdf>
 ///
 /// The suspicion level of failure is given by a value called φ (phi). The basic
 /// idea of the φ failure detector is to express the value of φ on a scale that
@@ -384,5 +375,31 @@ impl<T> CircleBuffer<T> {
 
     fn len(&self) -> usize {
         self.cursor
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn circle_buffer() {
+        let mut buf = CircleBuffer::new(3);
+
+        assert_eq!(buf.len(), 0);
+        assert_eq!(buf.push(1), None);
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf.push(2), None);
+        assert_eq!(buf.len(), 2);
+        assert_eq!(buf.push(3), None);
+        assert_eq!(buf.len(), 3);
+        assert_eq!(buf.push(4), Some(1));
+        assert_eq!(buf.len(), 4);
+        assert_eq!(buf.push(5), Some(2));
+        assert_eq!(buf.len(), 5);
+        assert_eq!(buf.push(6), Some(3));
+        assert_eq!(buf.len(), 6);
+        assert_eq!(buf.push(7), Some(4));
+        assert_eq!(buf.len(), 7);
     }
 }
