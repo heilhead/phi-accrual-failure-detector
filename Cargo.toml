@@ -12,4 +12,4 @@ homepage = "https://github.com/heilhead/phi-accrual-failure-detector.git"
 description = "Phi Accrual Failure Detector"
 
 [dependencies]
-thiserror = "2.0"
+thiserror = "1.0"

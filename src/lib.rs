@@ -1,4 +1,9 @@
-use std::time::{Duration, Instant};
+use std::{
+    cell::RefCell,
+    marker::PhantomData,
+    sync::RwLock,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -15,29 +20,36 @@ pub enum Error {
     FirstHeartbeatEstimate,
 }
 
-pub type PhiAccrualFailureDetector = Detector<DefaultClock>;
+/// [`FailureDetector`] for single-threaded environments.
+pub type UnsyncDetector = FailureDetector<UnsyncState<DefaultClock>>;
 
-pub struct DetectorBuilder<C: Clock> {
+/// [`FailureDetector`] for multi-threaded environments.
+pub type SyncDetector = FailureDetector<SyncState<DefaultClock>>;
+
+/// [`FailureDetector`] builder.
+pub struct Builder<S: sealed::State> {
     config: Config,
-    clock: C,
+    clock: S::Clock,
+    _marker: PhantomData<S>,
 }
 
-impl DetectorBuilder<DefaultClock> {
+impl<S: sealed::State<Clock = DefaultClock>> Builder<S> {
     pub fn new() -> Self {
         Self {
             config: Default::default(),
             clock: DefaultClock,
+            _marker: PhantomData,
         }
     }
 }
 
-impl Default for DetectorBuilder<DefaultClock> {
+impl Default for Builder<UnsyncState<DefaultClock>> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C: Clock> DetectorBuilder<C> {
+impl<S: sealed::State> Builder<S> {
     /// Threshold for considering the monitored resource unavailable.
     ///
     /// A low threshold is prone to generate many wrong suspicions but ensures a
@@ -93,20 +105,32 @@ impl<C: Clock> DetectorBuilder<C> {
         self
     }
 
+    /// Use [`RwLock`] internally to make the detector [`Sync`].
+    pub fn sync(self) -> Builder<SyncState<S::Clock>> {
+        self.state::<SyncState<S::Clock>>()
+    }
+
+    /// Use [`RefCell`] internally instead of [`RwLock`] for slightly better
+    /// performance.
+    pub fn unsync(self) -> Builder<UnsyncState<S::Clock>> {
+        self.state::<UnsyncState<S::Clock>>()
+    }
+
     /// Provide an alternative implementation of [`Clock`].
     ///
     /// Default: [`DefaultClock`]
-    pub fn clock<T: Clock>(self, clock: T) -> DetectorBuilder<T> {
-        DetectorBuilder {
+    pub fn clock<T: Clock>(self, clock: T) -> Builder<S::WithClock<T>> {
+        Builder {
             config: self.config,
             clock,
+            _marker: PhantomData,
         }
     }
 
     /// Builds an instance of [`Detector`].
     ///
     /// Returns an [`Error`] if some configuration parameters are incorrect.
-    pub fn build(self) -> Result<Detector<C>, Error> {
+    pub fn build(self) -> Result<FailureDetector<S>, Error> {
         let config = self.config;
 
         if config.threshold <= 0. {
@@ -125,7 +149,37 @@ impl<C: Clock> DetectorBuilder<C> {
             return Err(Error::FirstHeartbeatEstimate);
         }
 
-        Ok(Detector::new(config, self.clock))
+        let mean = config.first_heartbeat_estimate.as_millis() as f64;
+        let std_deviation = mean / 4.;
+
+        let threshold = config.threshold;
+        let acceptable_heartbeat_pause = config.acceptable_heartbeat_pause.as_millis() as f64;
+        let min_std_deviation = config.min_std_deviation.as_millis() as f64;
+
+        let mut history = HeartbeatHistory::new(config.max_sample_size);
+        history.add(mean - std_deviation);
+        history.add(mean + std_deviation);
+
+        let state = DetectorState {
+            threshold,
+            acceptable_heartbeat_pause,
+            min_std_deviation,
+            history,
+            last_timestamp: None,
+        };
+
+        Ok(FailureDetector {
+            state: state.into(),
+            clock: self.clock,
+        })
+    }
+
+    fn state<T: sealed::State<Clock = S::Clock>>(self) -> Builder<T> {
+        Builder {
+            config: self.config,
+            clock: self.clock,
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -149,90 +203,24 @@ impl Default for Config {
     }
 }
 
-/// Implementation of 'The Phi Accrual Failure Detector' by Hayashibara et al.
-/// as defined in their paper: <https://oneofus.la/have-emacs-will-hack/files/HDY04.pdf>
-///
-/// The suspicion level of failure is given by a value called φ (phi). The basic
-/// idea of the φ failure detector is to express the value of φ on a scale that
-/// is dynamically adjusted to reflect current network conditions. A
-/// configurable threshold is used to decide if φ is considered to be a failure.
-///
-/// The value of φ is calculated as: `φ = -log10(1 - F(timeSinceLastHeartbeat)`
-/// where `F` is the cumulative distribution function of a normal distribution
-/// with mean and standard deviation estimated from historical heartbeat
-/// inter-arrival times.
-pub struct Detector<C: Clock> {
+struct DetectorState<C: Clock> {
     threshold: f64,
     acceptable_heartbeat_pause: f64,
     min_std_deviation: f64,
     history: HeartbeatHistory,
-    clock: C,
     last_timestamp: Option<C::Timestamp>,
 }
 
-impl Detector<DefaultClock> {
-    pub fn builder() -> DetectorBuilder<DefaultClock> {
-        DetectorBuilder::new()
-    }
-}
-
-impl<C: Clock> Detector<C> {
-    fn new(config: Config, clock: C) -> Self {
-        assert!(config.threshold > 0.);
-        assert!(config.max_sample_size > 0);
-        assert!(!config.min_std_deviation.is_zero());
-        assert!(!config.first_heartbeat_estimate.is_zero());
-
-        let mean = config.first_heartbeat_estimate.as_millis() as f64;
-        let std_deviation = mean / 4.;
-
-        let mut history = HeartbeatHistory::new(config.max_sample_size);
-        history.add(mean - std_deviation);
-        history.add(mean + std_deviation);
-
-        let threshold = config.threshold;
-        let acceptable_heartbeat_pause = config.acceptable_heartbeat_pause.as_millis() as f64;
-        let min_std_deviation = config.min_std_deviation.as_millis() as f64;
-        let last_timestamp = None;
-
-        Self {
-            threshold,
-            acceptable_heartbeat_pause,
-            min_std_deviation,
-            history,
-            clock,
-            last_timestamp,
-        }
-    }
-
-    /// Notifies the detector that a heartbeat arrived from the monitored
-    /// resource. This causes the detector to update its state.
-    pub fn heartbeat(&mut self) {
-        let timestamp = self.clock.timestamp();
-
+impl<C: Clock> DetectorState<C> {
+    fn heartbeat(&mut self, timestamp: C::Timestamp) {
         if let (Some(last_timestamp), true) = (
             &self.last_timestamp,
             self.is_available_for_timestamp(&timestamp),
         ) {
-            self.history
-                .add(self.clock.elapsed_ms(last_timestamp, &timestamp));
+            self.history.add(C::elapsed_ms(last_timestamp, &timestamp));
         }
 
         self.last_timestamp = Some(timestamp);
-    }
-
-    /// The suspicion level of the accrual failure detector.
-    ///
-    /// If a connection does not have any records in failure detector then it is
-    /// considered healthy.
-    pub fn phi(&self) -> f64 {
-        self.phi_for_timestamp(&self.clock.timestamp())
-    }
-
-    /// Returns `true` if the resource is considered to be up and healthy and
-    /// returns `false` otherwise.
-    pub fn is_available(&self) -> bool {
-        self.is_available_for_timestamp(&self.clock.timestamp())
     }
 
     fn is_available_for_timestamp(&self, timestamp: &C::Timestamp) -> bool {
@@ -245,7 +233,7 @@ impl<C: Clock> Detector<C> {
             return 0.0;
         };
 
-        let time_diff = self.clock.elapsed_ms(last_timestamp, timestamp);
+        let time_diff = C::elapsed_ms(last_timestamp, timestamp);
         let mean = self.history.mean() + self.acceptable_heartbeat_pause;
         let std_deviation = self.history.std_deviation().max(self.min_std_deviation);
 
@@ -260,14 +248,142 @@ impl<C: Clock> Detector<C> {
     }
 }
 
+/// Implementation of 'The Phi Accrual Failure Detector' by Hayashibara et al.
+/// as defined in their paper: <https://oneofus.la/have-emacs-will-hack/files/HDY04.pdf>
+///
+/// The suspicion level of failure is given by a value called φ (phi). The basic
+/// idea of the φ failure detector is to express the value of φ on a scale that
+/// is dynamically adjusted to reflect current network conditions. A
+/// configurable threshold is used to decide if φ is considered to be a failure.
+///
+/// The value of φ is calculated as: `φ = -log10(1 - F(timeSinceLastHeartbeat)`
+/// where `F` is the cumulative distribution function of a normal distribution
+/// with mean and standard deviation estimated from historical heartbeat
+/// inter-arrival times.
+pub struct FailureDetector<S: sealed::State> {
+    state: S,
+    clock: S::Clock,
+}
+
+impl<S: sealed::State<Clock = DefaultClock>> FailureDetector<S> {
+    pub fn builder() -> Builder<S> {
+        Builder::new()
+    }
+}
+
+pub trait Detector {
+    /// Notifies the detector that a heartbeat arrived from the monitored
+    /// resource. This causes the detector to update its state.
+    fn heartbeat(&self);
+
+    /// The suspicion level of the accrual failure detector.
+    ///
+    /// If a connection does not have any records in failure detector then it is
+    /// considered healthy.
+    fn phi(&self) -> f64;
+
+    /// Returns `true` if the resource is considered to be up and healthy and
+    /// returns `false` otherwise.
+    fn is_available(&self) -> bool;
+}
+
+/// A [`FailureDetector`] state wrapper based on [`RefCell`] for single-threaded
+/// access.
+pub struct UnsyncState<C: Clock>(RefCell<DetectorState<C>>);
+
+impl<C: Clock> sealed::State for UnsyncState<C> {
+    type Clock = C;
+    type WithClock<T: Clock> = UnsyncState<T>;
+}
+
+impl<C: Clock> From<DetectorState<C>> for UnsyncState<C> {
+    fn from(inner: DetectorState<C>) -> Self {
+        Self(RefCell::new(inner))
+    }
+}
+
+impl<C: Clock> Detector for FailureDetector<UnsyncState<C>> {
+    fn heartbeat(&self) {
+        self.state.0.borrow_mut().heartbeat(self.clock.timestamp());
+    }
+
+    fn phi(&self) -> f64 {
+        self.state
+            .0
+            .borrow()
+            .phi_for_timestamp(&self.clock.timestamp())
+    }
+
+    fn is_available(&self) -> bool {
+        self.state
+            .0
+            .borrow()
+            .is_available_for_timestamp(&self.clock.timestamp())
+    }
+}
+
+/// A [`FailureDetector`] state wrapper based on [`RwLock`] for multi-threaded
+/// access.
+pub struct SyncState<C: Clock>(RwLock<DetectorState<C>>);
+
+impl<C: Clock> sealed::State for SyncState<C> {
+    type Clock = C;
+    type WithClock<T: Clock> = SyncState<T>;
+}
+
+impl<C: Clock> From<DetectorState<C>> for SyncState<C> {
+    fn from(inner: DetectorState<C>) -> Self {
+        Self(RwLock::new(inner))
+    }
+}
+
+impl<C: Clock> Detector for FailureDetector<SyncState<C>> {
+    fn heartbeat(&self) {
+        self.state
+            .0
+            .write()
+            .unwrap()
+            .heartbeat(self.clock.timestamp());
+    }
+
+    fn phi(&self) -> f64 {
+        self.state
+            .0
+            .read()
+            .unwrap()
+            .phi_for_timestamp(&self.clock.timestamp())
+    }
+
+    fn is_available(&self) -> bool {
+        self.state
+            .0
+            .read()
+            .unwrap()
+            .is_available_for_timestamp(&self.clock.timestamp())
+    }
+}
+
+mod sealed {
+    use super::*;
+
+    #[allow(private_bounds)]
+    pub trait State: From<DetectorState<Self::Clock>> {
+        type Clock: Clock;
+        type WithClock<T: Clock>: State<Clock = T>;
+    }
+}
+
 pub trait Clock {
     type Timestamp;
 
+    /// Returns current time.
     fn timestamp(&self) -> Self::Timestamp;
-    fn elapsed(&self, before: &Self::Timestamp, after: &Self::Timestamp) -> Duration;
 
-    fn elapsed_ms(&self, before: &Self::Timestamp, after: &Self::Timestamp) -> f64 {
-        self.elapsed(before, after).as_millis() as f64
+    /// Returns time elapsed between two timestamps.
+    fn elapsed(before: &Self::Timestamp, after: &Self::Timestamp) -> Duration;
+
+    fn elapsed_ms(before: &Self::Timestamp, after: &Self::Timestamp) -> f64 {
+        Self::elapsed(before, after).as_millis() as f64
     }
 }
 
@@ -281,7 +397,7 @@ impl Clock for DefaultClock {
         Instant::now()
     }
 
-    fn elapsed(&self, before: &Self::Timestamp, after: &Self::Timestamp) -> Duration {
+    fn elapsed(before: &Self::Timestamp, after: &Self::Timestamp) -> Duration {
         if before > after {
             Duration::ZERO
         } else {
@@ -401,5 +517,14 @@ mod tests {
         assert_eq!(buf.len(), 6);
         assert_eq!(buf.push(7), Some(4));
         assert_eq!(buf.len(), 7);
+    }
+
+    fn ensure_sync<T: Sync>() {}
+
+    #[test]
+    fn ensure_bounds() {
+        ensure_sync::<SyncDetector>();
+        let _: SyncDetector = UnsyncDetector::builder().sync().build().unwrap();
+        let _: UnsyncDetector = SyncDetector::builder().unsync().build().unwrap();
     }
 }

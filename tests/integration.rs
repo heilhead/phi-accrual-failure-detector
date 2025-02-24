@@ -33,13 +33,13 @@ impl Clock for FakeClock {
         dbg!(self.time.fetch_add(self.intervals[idx], Ordering::Relaxed))
     }
 
-    fn elapsed(&self, before: &Self::Timestamp, after: &Self::Timestamp) -> Duration {
+    fn elapsed(before: &Self::Timestamp, after: &Self::Timestamp) -> Duration {
         Duration::from_millis(*after - *before)
     }
 }
 
-fn builder() -> DetectorBuilder<DefaultClock> {
-    Detector::builder()
+fn builder() -> Builder<UnsyncState<DefaultClock>> {
+    FailureDetector::builder()
         .threshold(8.0)
         .max_sample_size(100)
         .min_std_deviation(Duration::from_millis(10))
@@ -50,7 +50,7 @@ fn builder() -> DetectorBuilder<DefaultClock> {
 #[test]
 fn node_available() {
     let intervals = vec![0, 1000, 100, 100];
-    let mut detector = builder().clock(FakeClock::new(intervals)).build().unwrap();
+    let detector = builder().clock(FakeClock::new(intervals)).build().unwrap();
     detector.heartbeat();
     detector.heartbeat();
     detector.heartbeat();
@@ -60,7 +60,7 @@ fn node_available() {
 #[test]
 fn node_heartbeat_missed_dead1() {
     let intervals = vec![0, 1000, 100, 100, 7000];
-    let mut detector = builder().clock(FakeClock::new(intervals)).build().unwrap();
+    let detector = builder().clock(FakeClock::new(intervals)).build().unwrap();
 
     detector.heartbeat(); // 0
     detector.heartbeat(); // 1000
@@ -73,7 +73,7 @@ fn node_heartbeat_missed_dead1() {
 #[test]
 fn node_heartbeat_missed_dead2() {
     let intervals = vec![0, 1000, 1000, 1000, 1000, 1000, 500, 500, 5000];
-    let mut detector = builder()
+    let detector = builder()
         .acceptable_heartbeat_pause(Duration::from_secs(3))
         .clock(FakeClock::new(intervals))
         .build()
@@ -93,7 +93,7 @@ fn node_heartbeat_missed_dead2() {
 #[test]
 fn node_heartbeat_missed_alive() {
     let intervals = vec![0, 1000, 1000, 1000, 4000, 1000, 1000];
-    let mut detector = builder()
+    let detector = builder()
         .acceptable_heartbeat_pause(Duration::from_secs(3))
         .clock(FakeClock::new(intervals))
         .build()
@@ -111,7 +111,7 @@ fn node_heartbeat_missed_alive() {
 #[test]
 fn dead_node_alive_again() {
     let intervals = vec![0, 1000, 1000, 1000, 3000, 1000, 1000];
-    let mut detector = builder().clock(FakeClock::new(intervals)).build().unwrap();
+    let detector = builder().clock(FakeClock::new(intervals)).build().unwrap();
 
     detector.heartbeat(); // 0
     detector.heartbeat(); // 1000
@@ -124,7 +124,7 @@ fn dead_node_alive_again() {
 
 #[test]
 fn node_heartbeat_missed_dead_real_clock() {
-    let mut detector = builder().build().unwrap();
+    let detector = builder().build().unwrap();
 
     detector.heartbeat(); // 0
     thread::sleep(Duration::from_millis(1000));

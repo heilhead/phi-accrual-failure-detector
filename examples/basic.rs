@@ -1,10 +1,10 @@
 use {
-    phi_accrual_failure_detector::PhiAccrualFailureDetector,
+    phi_accrual_failure_detector::{Detector as _, UnsyncDetector},
     std::{thread, time::Duration},
 };
 
 fn main() {
-    let mut detector = PhiAccrualFailureDetector::builder().build().unwrap();
+    let detector = UnsyncDetector::builder().build().unwrap();
 
     println!("heartbeat");
     detector.heartbeat();
