@@ -505,6 +505,33 @@ impl<T> CircleBuffer<T> {
 mod tests {
     use super::*;
 
+    fn validate_history(history: &HeartbeatHistory, intervals: &[f64]) {
+        let (sum, sum_squared) = intervals
+            .iter()
+            .fold((0.0, 0.0), |(sum, sum_squared), interval| {
+                (sum + interval, sum_squared + interval * interval)
+            });
+
+        assert_eq!(history.interval_sum, sum);
+        assert_eq!(history.squared_interval_sum, sum_squared);
+        assert_eq!(history.mean(), sum / history.intervals.len() as f64);
+    }
+
+    #[test]
+    fn heartbeat_history() {
+        let sample_size = 30;
+        let intervals = (1..100).map(|i| i as f64).collect::<Vec<_>>();
+        let mut history = HeartbeatHistory::new(sample_size);
+
+        for (idx, interval) in intervals.iter().enumerate() {
+            let end_idx = idx + 1;
+            let start_idx = end_idx.max(sample_size) - sample_size;
+
+            history.add(*interval);
+            validate_history(&history, &intervals[start_idx..end_idx]);
+        }
+    }
+
     #[test]
     fn circle_buffer() {
         let mut buf = CircleBuffer::new(3);
