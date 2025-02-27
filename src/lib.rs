@@ -292,6 +292,10 @@ pub trait Detector {
     /// Returns `true` if the resource is considered to be up and healthy and
     /// returns `false` otherwise.
     fn is_available(&self) -> bool;
+
+    /// Returns `true` if the failure detector has received any heartbeats and
+    /// started monitoring of the resource.
+    fn is_monitoring(&self) -> bool;
 }
 
 /// A [`FailureDetector`] state wrapper based on [`RefCell`] for single-threaded
@@ -326,6 +330,10 @@ impl<C: Clock> Detector for FailureDetector<UnsyncState<C>> {
             .0
             .borrow()
             .is_available_for_timestamp(&self.clock.timestamp())
+    }
+
+    fn is_monitoring(&self) -> bool {
+        self.state.0.borrow().last_timestamp.is_some()
     }
 }
 
@@ -367,6 +375,10 @@ impl<C: Clock> Detector for FailureDetector<SyncState<C>> {
             .read()
             .unwrap()
             .is_available_for_timestamp(&self.clock.timestamp())
+    }
+
+    fn is_monitoring(&self) -> bool {
+        self.state.0.read().unwrap().last_timestamp.is_some()
     }
 }
 
