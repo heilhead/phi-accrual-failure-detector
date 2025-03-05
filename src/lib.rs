@@ -431,7 +431,7 @@ impl Clock for DefaultClock {
 /// The stats (`mean`, `variance`, `std_deviation`) are not defined for empty
 /// [`HeartbeatHistory`].
 struct HeartbeatHistory {
-    intervals: CircleBuffer<f64>,
+    intervals: RingBuffer<f64>,
     interval_sum: f64,
     squared_interval_sum: f64,
 }
@@ -441,7 +441,7 @@ impl HeartbeatHistory {
         assert!(max_sample_size > 0);
 
         Self {
-            intervals: CircleBuffer::new(max_sample_size),
+            intervals: RingBuffer::new(max_sample_size),
             interval_sum: 0.,
             squared_interval_sum: 0.,
         }
@@ -475,16 +475,16 @@ fn pow2(x: f64) -> f64 {
     x * x
 }
 
-/// Simple circular buffer that only allows for pushing values, and returns the
+/// Simple ring buffer that only allows for pushing values, and returns the
 /// oldest value on overflow.
 #[derive(Clone)]
-struct CircleBuffer<T> {
+struct RingBuffer<T> {
     data: Vec<T>,
     capacity: usize,
     cursor: usize,
 }
 
-impl<T> CircleBuffer<T> {
+impl<T> RingBuffer<T> {
     fn new(capacity: usize) -> Self {
         assert!(capacity > 0);
         Self {
@@ -545,8 +545,8 @@ mod tests {
     }
 
     #[test]
-    fn circle_buffer() {
-        let mut buf = CircleBuffer::new(3);
+    fn ring_buffer() {
+        let mut buf = RingBuffer::new(3);
 
         assert_eq!(buf.len(), 0);
         assert_eq!(buf.push(1), None);
