@@ -2,7 +2,7 @@
 name = "phi-accrual-failure-detector"
 version = "0.1.0"
 edition = "2021"
-keywords = []
+keywords = ["phi-accrual", "healthcheck", "detector", "monitoring", "availability"]
 categories = ["algorithms"]
 authors = ["Ivan Reshetnikov"]
 license = "Apache-2.0"
