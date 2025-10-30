@@ -86,8 +86,7 @@ impl<S: sealed::State> Builder<S> {
     /// Duration corresponding to number of potentially lost/delayed heartbeats
     /// that will be accepted before considering it to be an anomaly. This
     /// margin is important to be able to survive sudden, occasional, pauses in
-    /// heartbeat   arrivals, due to for example garbage collect or network
-    /// drop.
+    /// heartbeat arrivals, due to for example garbage collect or network drop.
     ///
     /// Default: 3s
     pub fn acceptable_heartbeat_pause(mut self, acceptable_heartbeat_pause: Duration) -> Self {
@@ -96,8 +95,8 @@ impl<S: sealed::State> Builder<S> {
     }
 
     /// Bootstrap the stats with heartbeats that corresponds to to this
-    /// duration, with a with rather high standard deviation (since environment
-    /// is unknown in the beginning).
+    /// duration, with a rather high standard deviation (since environment is
+    /// unknown in the beginning).
     ///
     /// Default: 1s
     pub fn first_heartbeat_estimate(mut self, first_heartbeat_estimate: Duration) -> Self {
